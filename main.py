@@ -52,66 +52,94 @@ BG_BRIGHT_WHITE = "\033[107m"
 # Load environment variables from .env file
 load_dotenv()
 
-def extract_name_and_id(json_response):
-    # Placeholder for the result
+def extract_services(json_response):
+    """Extract service name, internal_id, and type from JSON response."""
     result = []
 
-    # Extracting the services from the JSON response
     services = json_response.get('data', {}).get('services', {})
-    
-    # Making a new JSON object with the desired structure
-    for service_type in services:
-        for service in services[service_type]:
+
+    for service_type, service_list in services.items():
+        for service in service_list:
             result.append({
                 'name': service['name'],
-                'internal_id': service['internal_id']
+                'internal_id': service['internal_id'],
+                'type': service_type
             })
-    
+
     return result
 
 def request_data(api_key: str):
-    # Url for requesting the names/internal_ids
+    """Fetch service data from API."""
     url = 'https://manage.24fire.de/api/account/services'
-
-    # Fetch Response from 24fire
     response = requests.get(url, headers={'X-Fire-Apikey': api_key})
 
-    # Fetch the name and internal_ids
-    result = extract_name_and_id(response.json())
+    if response.status_code == 200:
+        return extract_services(response.json())
+    else:
+        print(f"Error: {response.status_code} - {response.text}")
+        return []
 
-    return result
+def get_service_type(services, search_value):
+    """Find service type by internal_id or name."""
+    for service in services:
+        if service['internal_id'] == search_value or service['name'] == search_value:
+            return service['type']
+    return None
+
+def request_data(api_key: str):
+    """Fetch service data from API with support for numeric selection."""
+    url = 'https://manage.24fire.de/api/account/services'
+    response = requests.get(url, headers={'X-Fire-Apikey': api_key})
+
+    if response.status_code == 200:
+        services = extract_services(response.json())
+        # Create a mapping of index to service
+        numbered_services = {str(idx): service for idx, service in enumerate(services, start=1)}
+        return services, numbered_services
+    else:
+        print(f"Error: {response.status_code} - {response.text}")
+        return [], {}
+
+def fetch_infos(api_key, internal_id, service_type):
+    """Fetch service infos from API."""
+    kvm_url = f"https://manage.24fire.de/api/kvm/{internal_id}/status"
+    webspace_url = f"https://manage.24fire.de/api/webspace/{internal_id}"
+    domain_url = f"https://manage.24fire.de/api/domain/{internal_id}"
+
+    if service_type == 'KVM':
+        response = requests.get(kvm_url, headers={'X-Fire-Apikey': api_key})
+        return response.json()
+    elif service_type == 'WEBSPACE':
+        response = requests.get(webspace_url, headers={'X-Fire-Apikey': api_key})
+        return response.json()
+    elif service_type == 'DOMAIN':
+        response = requests.get(domain_url, headers={'X-Fire-Apikey': api_key})
+        return response.json()
+    else:
+        print("Invalid service type.")
+        return
 
 def main(api_key: str):
-    # Placeholder number
-    num = 0
+    data, numbered_services = request_data(api_key)
 
-    # Define the main Variables
-    data = request_data(api_key)
-    names = [service['name'] for service in data]
+    if not data:
+        print("No services found.")
+        return
 
-    # Define the Logo
-    logo = """
-.d8888b.     d8888  .d888d8b                   .d8888b. 888     8888888 
-d88P  Y88b   d8P888 d88P" Y8P                  d88P  Y88b888       888   
-       888  d8P 888 888                        888    888888       888   
-     .d88P d8P  888 888888888888d888 .d88b.    888       888       888   
- .od888P" d88   888 888   888888P"  d8P  Y8b   888       888       888   
-d88P"     8888888888888   888888    88888888   888    888888       888   
-888"            888 888   888888    Y8b.       Y88b  d88P888       888   
-888888888       888 888   888888     "Y8888     "Y8888P" 888888888888888 
-Coded by SyncWide Solutions
-                                                                         
-    """
+    # Print services with numbers
+    for idx, service in enumerate(data, start=1):
+        print(f"{BLUE}{idx}. {service['name']}{RESET}")
 
-    # Print the logo
-    print(f"{RED}{logo}")
-
-    # list names numberized
-    for name in names:
-        num += 1
-        print(f"{BLUE}{num} - {name}")
-
+    # User input to find service type
+    user_input = input(f"{YELLOW}Enter the number to fetch the infos from:{RESET} ").strip()
+    
+    # Handle numeric input
+    if user_input.isdigit() and 1 <= int(user_input) <= len(data):
+        selected_service = data[int(user_input) - 1]
+        infos = fetch_infos(api_key, selected_service['internal_id'], selected_service['type'])
+        print(infos)
+    else:
+        print("Invalid selection. Please enter a valid number.")
 
 if __name__ == "__main__":
     main(os.getenv('FIRE_API_KEY'))
-    print(RESET)
