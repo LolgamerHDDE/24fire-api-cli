@@ -121,6 +121,19 @@ def fetch_infos(api_key, internal_id, service_type):
 
 def main(api_key: str):
     data, numbered_services = request_data(api_key)
+    
+    logo = """
+ .d8888b.     d8888  .d888d8b                   .d8888b. 888     8888888 
+d88P  Y88b   d8P888 d88P" Y8P                  d88P  Y88b888       888   
+       888  d8P 888 888                        888    888888       888   
+     .d88P d8P  888 888888888888d888 .d88b.    888       888       888   
+ .od888P" d88   888 888   888888P"  d8P  Y8b   888       888       888   
+d88P"     8888888888888   888888    88888888   888    888888       888   
+888"            888 888   888888    Y8b.       Y88b  d88P888       888   
+888888888       888 888   888888     "Y8888     "Y8888P" 888888888888888 
+                                                                         
+"""
+    print(f"{GREEN}{logo}{RESET}")
 
     if not data:
         print("No services found.")
