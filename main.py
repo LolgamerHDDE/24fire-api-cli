@@ -119,6 +119,20 @@ def fetch_infos(api_key, internal_id, service_type):
         print("Invalid service type.")
         return
 
+def format_output(data):
+    """Format the API response data into readable key-value pairs."""
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                print(f"\n{CYAN}{key}:{RESET}")
+                format_output(value)
+            else:
+                print(f"{BLUE}{key}:{RESET} {value}")
+    elif isinstance(data, list):
+        for item in data:
+            format_output(item)
+            print()
+
 def main(api_key: str):
     data, numbered_services = request_data(api_key)
     
@@ -150,9 +164,9 @@ d88P"     8888888888888   888888    88888888   888    888888       888
     if user_input.isdigit() and 1 <= int(user_input) <= len(data):
         selected_service = data[int(user_input) - 1]
         infos = fetch_infos(api_key, selected_service['internal_id'], selected_service['type'])
-        print(infos)
+        print(f"\n{BOLD}Service Information:{RESET}")
+        format_output(infos)
     else:
         print("Invalid selection. Please enter a valid number.")
-
 if __name__ == "__main__":
     main(os.getenv('FIRE_API_KEY'))
