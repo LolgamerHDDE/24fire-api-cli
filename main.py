@@ -52,6 +52,13 @@ BG_BRIGHT_WHITE = "\033[107m"
 # Load environment variables from .env file
 load_dotenv()
 
+# Define API key from environment variable
+API_KEY = os.getenv("FIRE_API_KEY")
+
+# Handleing the Not Found Error
+if not API_KEY:
+    API_KEY = "None"
+
 def extract_services(json_response):
     """Extract service name, internal_id, and type from JSON response."""
     result = []
@@ -76,8 +83,9 @@ def request_data(api_key: str):
     if response.status_code == 200:
         return extract_services(response.json())
     else:
-        print(f"Error: {response.status_code} - {response.text}")
-        return []
+        json_response = response.json()
+        print(f"Error: {json_response.get('message', 'Unknown error')}")
+        exit(1)
 
 def get_service_type(services, search_value):
     """Find service type by internal_id or name."""
@@ -97,8 +105,9 @@ def request_data(api_key: str):
         numbered_services = {str(idx): service for idx, service in enumerate(services, start=1)}
         return services, numbered_services
     else:
-        print(f"Error: {response.status_code} - {response.text}")
-        return [], {}
+        json_response = response.json()
+        print(f"{RED} Error: {json_response.get('message', 'Unknown error')} {RESET}")
+        exit(1)
 
 def fetch_infos(api_key, internal_id, service_type):
     """Fetch service infos from API."""
@@ -150,7 +159,7 @@ d88P"     8888888888888   888888    88888888   888    888888       888
     print(f"{GREEN}{logo}{RESET}")
 
     if not data:
-        print("No services found.")
+        print(f"{RED} No services found. {RESET}")
         return
 
     # Print services with numbers
@@ -169,4 +178,4 @@ d88P"     8888888888888   888888    88888888   888    888888       888
     else:
         print("Invalid selection. Please enter a valid number.")
 if __name__ == "__main__":
-    main(os.getenv('FIRE_API_KEY'))
+    main(API_KEY)
