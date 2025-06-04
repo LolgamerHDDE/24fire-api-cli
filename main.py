@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+import argparse
 from dotenv import load_dotenv
 
 # ANSI escape codes for CLI colors
@@ -52,12 +53,27 @@ BG_BRIGHT_WHITE = "\033[107m"
 # Load environment variables from .env file
 load_dotenv()
 
-# Define API key from environment variable
-API_KEY = os.getenv("FIRE_API_KEY")
+def get_api_key():
+    """Get API key from command line arguments or environment variable."""
+    parser = argparse.ArgumentParser(description='24Fire API CLI Tool')
+    parser.add_argument('-a', '--api-key', 
+                       help='API key for 24Fire (overrides .env file)',
+                       type=str)
+    
+    args = parser.parse_args()
+    
+    # Priority: command line argument > environment variable > None
+    if args.api_key:
+        return args.api_key
+    
+    env_api_key = os.getenv("FIRE_API_KEY")
+    if env_api_key:
+        return env_api_key
+    
+    return "None"
 
-# Handleing the Not Found Error
-if not API_KEY:
-    API_KEY = "None"
+# Define API key with priority handling
+API_KEY = get_api_key()
 
 def extract_services(json_response):
     """Extract service name, internal_id, and type from JSON response."""
