@@ -1,5 +1,6 @@
 import requests
 import json
+import sys
 import os
 import argparse
 from dotenv import load_dotenv
@@ -53,14 +54,120 @@ BG_BRIGHT_WHITE = "\033[107m"
 # Load environment variables from .env file
 load_dotenv()
 
+def find_kvm_server(api_key, server_identifier):
+    """Find KVM server by name or internal_id and return server info."""
+    try:
+        # Make direct API call to get raw service data
+        url = 'https://manage.24fire.de/api/account/services'
+        response = requests.get(url, headers={'X-Fire-Apikey': api_key})
+        
+        if response.status_code != 200:
+            return None
+            
+        json_response = response.json()
+        services = json_response.get('data', {}).get('services', {})
+        
+        # Look specifically in the KVM section
+        kvm_servers = services.get('KVM', [])
+        
+        for server in kvm_servers:
+            if (server['name'] == server_identifier or 
+                server['internal_id'] == server_identifier):
+                # Return server info with type added for consistency
+                server_info = server.copy()
+                server_info['type'] = 'KVM'
+                return server_info
+        
+        return None
+    except Exception as e:
+        print(f"{RED}Error finding KVM server: {e}{RESET}")
+        return None
+
+def control_kvm_server(api_key, server_identifier, mode):
+    """Control KVM server power state."""
+    # Find the server
+    server = find_kvm_server(api_key, server_identifier)
+    
+    if not server:
+        print(f"{RED}Server '{server_identifier}' not found or is not a KVM server.{RESET}")
+        return
+    
+    # Make the API call
+    url = f"https://manage.24fire.de/api/kvm/{server['internal_id']}/power"
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Fire-Apikey': api_key
+    }
+    data = {'mode': mode}
+    
+    try:
+        response = requests.post(url, headers=headers, data=data)
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                # Success message
+                action_past = {
+                    'start': 'Started',
+                    'stop': 'Stopped', 
+                    'restart': 'Restarted'
+                }
+                print(f"{GREEN}{server['name']} successfully {action_past[mode]}{RESET}")
+            else:
+                # API returned error
+                action_verb = {
+                    'start': 'Start',
+                    'stop': 'Stop',
+                    'restart': 'Restart'
+                }
+                print(f"{RED}Failed to {action_verb[mode]} {server['name']}{RESET}")
+        else:
+            # HTTP error
+            action_verb = {
+                'start': 'Start',
+                'stop': 'Stop', 
+                'restart': 'Restart'
+            }
+            print(f"{RED}Failed to {action_verb[mode]} {server['name']}{RESET}")
+            
+    except requests.RequestException:
+        action_verb = {
+            'start': 'Start',
+            'stop': 'Stop',
+            'restart': 'Restart'
+        }
+        print(f"{RED}Failed to {action_verb[mode]} {server['name']} - Network error{RESET}")
+
 def get_api_key():
     """Get API key from command line arguments or environment variable."""
     parser = argparse.ArgumentParser(description='24Fire API CLI Tool')
     parser.add_argument('-a', '--api-key', 
                        help='API key for 24Fire (overrides .env file)',
                        type=str)
+    parser.add_argument('-S', '--start',
+                       help='Start a KVM server by name or internal ID',
+                       type=str)
+    parser.add_argument('-s', '--stop',
+                       help='Stop a KVM server by name or internal ID',
+                       type=str)
+    parser.add_argument('-r', '--restart',
+                       help='Restart a KVM server by name or internal ID',
+                       type=str)
     
     args = parser.parse_args()
+    
+    # Handle server control operations
+    if args.start or args.stop or args.restart:
+        api_key = args.api_key or os.getenv("FIRE_API_KEY") or "None"
+        
+        if args.start:
+            control_kvm_server(api_key, args.start, "start")
+        elif args.stop:
+            control_kvm_server(api_key, args.stop, "stop")
+        elif args.restart:
+            control_kvm_server(api_key, args.restart, "restart")
+        
+        sys.exit(0)
     
     # Priority: command line argument > environment variable > None
     if args.api_key:
@@ -111,7 +218,7 @@ def request_data(api_key: str):
     else:
         json_response = response.json()
         print(f"{RED} Error: {json_response.get('message', 'Unknown error')} {RESET}")
-        exit(1)
+        sys.exit(1)
 
 def fetch_infos(api_key, internal_id, service_type):
     """Fetch service infos from API."""

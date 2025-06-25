@@ -1,2 +1,5 @@
 publish.bat
 .env
+/build
+/dist
+24fire-cli.spec
