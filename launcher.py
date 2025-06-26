@@ -9,7 +9,7 @@ def should_pause():
         return False
     
     # Don't pause if help arguments are present
-    help_args = ['-h', '--help', '-s', '-S', '-r', '--start', '--stop', '--restart']
+    help_args = ['-h', '--help', '-s', '-S', '-r', '--start', '--stop', '--restart', '-b', '--backup', '-t', '--traffic', '--backup-id', '-T', '--traffic']
     for arg in sys.argv[1:]:
         if arg in help_args:
             return False
