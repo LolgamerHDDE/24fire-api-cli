@@ -138,6 +138,392 @@ def control_kvm_server(api_key, server_identifier, mode):
         }
         print(f"{RED}Failed to {action_verb[mode]} {server['name']} - Network error{RESET}")
 
+def format_backups(data):
+    """Format backup data with better structure."""
+    if not data or 'data' not in data:
+        print(f"{RED}No backup data available{RESET}")
+        return
+    
+    backups = data['data']
+    
+    print(f"\n{BOLD}{CYAN}=== VM BACKUPS ==={RESET}")
+    print(f"{GREEN}Status: {data.get('status', 'N/A')}{RESET}")
+    print(f"{BLUE}Message: {data.get('message', 'N/A')}{RESET}")
+    
+    if backups:
+        print(f"\n{BOLD}{YELLOW}Found {len(backups)} backup(s):{RESET}")
+        
+        for idx, backup in enumerate(backups, 1):
+            print(f"\n{BOLD}{MAGENTA}=== BACKUP #{idx} ==={RESET}")
+            print(f"  {BLUE}Backup ID:{RESET} {backup.get('backup_id', 'N/A')}")
+            print(f"  {BLUE}Operating System:{RESET} {backup.get('backup_os', 'N/A').replace('_', ' ').title()}")
+            
+            # Description with fallback
+            description = backup.get('backup_description', '').strip()
+            desc_text = description if description else "No description"
+            desc_color = WHITE if description else BRIGHT_BLACK
+            print(f"  {BLUE}Description:{RESET} {desc_color}{desc_text}{RESET}")
+            
+            # Size with safe handling for None values
+            size = backup.get('size')
+            if size is not None and isinstance(size, (int, float)):
+                if size >= 1024:
+                    size_text = f"{size/1024:.2f} GB"
+                else:
+                    size_text = f"{size:.2f} MB"
+                print(f"  {BLUE}Size:{RESET} {CYAN}{size_text}{RESET}")
+            else:
+                print(f"  {BLUE}Size:{RESET} {BRIGHT_BLACK}Unknown{RESET}")
+            
+            # Created date formatting
+            created = backup.get('created', 'N/A')
+            if created != 'N/A':
+                # Convert ISO format to readable format
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    print(f"  {BLUE}Created:{RESET} {GREEN}{formatted_date}{RESET}")
+                except:
+                    print(f"  {BLUE}Created:{RESET} {created}")
+            else:
+                print(f"  {BLUE}Created:{RESET} {created}")
+            
+            # Status with color coding
+            status = backup.get('status', 'unknown').lower()
+            if status == 'finished':
+                status_color = GREEN
+                status_icon = "✓"
+            elif status == 'running':
+                status_color = YELLOW
+                status_icon = "⏳"
+            elif status == 'failed':
+                status_color = RED
+                status_icon = "✗"
+            else:
+                status_color = BRIGHT_BLACK
+                status_icon = "?"
+            
+            print(f"  {BLUE}Status:{RESET} {status_color}{status_icon} {status.title()}{RESET}")
+            
+            # Add separator line except for last backup
+            if idx < len(backups):
+                print(f"  {BRIGHT_BLACK}{'─' * 50}{RESET}")
+    else:
+        print(f"  {YELLOW}No backups found{RESET}")
+    
+    # Summary with safe size calculation
+    if backups:
+        total_size = 0
+        valid_sizes = []
+        
+        for backup in backups:
+            size = backup.get('size')
+            if size is not None and isinstance(size, (int, float)):
+                total_size += size
+                valid_sizes.append(size)
+        
+        if total_size >= 1024:
+            total_size_text = f"{total_size/1024:.2f} GB"
+        else:
+            total_size_text = f"{total_size:.2f} MB"
+        
+        finished_count = sum(1 for backup in backups if backup.get('status') == 'finished')
+        running_count = sum(1 for backup in backups if backup.get('status') == 'running')
+        failed_count = sum(1 for backup in backups if backup.get('status') == 'failed')
+        
+        print(f"\n{BOLD}{CYAN}=== SUMMARY ==={RESET}")
+        print(f"  {BLUE}Total Backups:{RESET} {BRIGHT_WHITE}{len(backups)}{RESET}")
+        print(f"  {BLUE}Finished:{RESET} {GREEN}{finished_count}{RESET}")
+        if running_count > 0:
+            print(f"  {BLUE}Running:{RESET} {YELLOW}{running_count}{RESET}")
+        if failed_count > 0:
+            print(f"  {BLUE}Failed:{RESET} {RED}{failed_count}{RESET}")
+        
+        if valid_sizes:
+            print(f"  {BLUE}Total Size:{RESET} {CYAN}{total_size_text}{RESET}")
+        else:
+            print(f"  {BLUE}Total Size:{RESET} {BRIGHT_BLACK}Unknown{RESET}")
+
+def handle_backup_request(api_key, action, target, backup_id=None):
+    server = find_kvm_server(api_key, target)
+    
+    if not server:
+        print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
+        return
+    
+    server_internal_id = server['internal_id']
+    
+    if action == 'list':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/backup/list'
+        response = requests.get(url,
+                                headers = {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                    'X-Fire-Apikey': api_key
+                                })
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                format_backups(json_response)
+            else:
+                print(f"{RED}Failed to fetch backups: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}Failed to fetch backups for {server['name']} - HTTP {response.status_code}{RESET}")
+    
+    elif action == 'create':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/backup/create'
+        response = requests.post(url,
+                                headers = {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                    'X-Fire-Apikey': api_key
+                                })
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                print(f"{GREEN}✓ Backup creation started for {server['name']}{RESET}")
+                print(f"{BLUE}Message: {json_response.get('message', 'Backup initiated')}{RESET}")
+                print(f"{BLUE}Backup ID: {json_response.get('data', {}).get('backup_id', 'N/A')}{RESET}")
+            else:
+                print(f"{RED}✗ Failed to create backup: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}✗ Failed to create backup for {server['name']} - HTTP {response.status_code}{RESET}")
+    
+    elif action == 'restore':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/backup/restore'
+        data = {'backup_id': backup_id}
+        response = requests.post(url,
+                                headers = {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                    'X-Fire-Apikey': api_key
+                                },
+                                data=data)
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                print(f"{GREEN}✓ Backup restore started for {server['name']}{RESET}")
+                print(f"{BLUE}Backup ID: {backup_id}{RESET}")
+                print(f"{BLUE}Message: {json_response.get('message', 'Restore initiated')}{RESET}")
+            else:
+                print(f"{RED}✗ Failed to restore backup: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}✗ Failed to restore backup for {server['name']} - HTTP {response.status_code}{RESET}")
+    
+    elif action == 'delete':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/backup/delete'
+        data = {'backup_id': backup_id}
+        response = requests.delete(url,
+                                headers = {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                    'X-Fire-Apikey': api_key
+                                },
+                                data=data)
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                print(f"{GREEN}✓ Backup deleted successfully{RESET}")
+                print(f"{BLUE}Backup ID: {backup_id}{RESET}")
+                print(f"{BLUE}Message: {json_response.get('message', 'Backup deleted')}{RESET}")
+            else:
+                print(f"{RED}✗ Failed to delete backup: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}✗ Failed to delete backup - HTTP {response.status_code}{RESET}")
+
+def format_traffic(response):
+    """Format traffic data with better structure."""
+    if response.status_code != 200:
+        print(f"{RED}Failed to fetch traffic data - HTTP {response.status_code}{RESET}")
+        return
+    
+    try:
+        data = response.json()
+    except:
+        print(f"{RED}Failed to parse traffic data{RESET}")
+        return
+    
+    if not data or data.get('status') != 'success':
+        print(f"{RED}Error: {data.get('message', 'Unknown error')}{RESET}")
+        return
+    
+    print(f"\n{BOLD}{CYAN}=== TRAFFIC DATA ==={RESET}")
+    print(f"{GREEN}Status: {data.get('status', 'N/A')}{RESET}")
+    print(f"{BLUE}Message: {data.get('message', 'N/A')}{RESET}")
+    
+    traffic_data = data.get('data', {})
+    month = traffic_data.get('month', 'N/A')
+    
+    # Check if this is usage data (has 'usage' key) or logs data (has 'log' key)
+    if 'usage' in traffic_data:
+        format_traffic_usage(traffic_data, month)
+    elif 'log' in traffic_data:
+        format_traffic_logs(traffic_data, month)
+    else:
+        print(f"{RED}Unknown traffic data format{RESET}")
+
+def format_traffic_usage(data, month):
+    """Format traffic usage data with comprehensive null handling."""
+    # Safe extraction with fallbacks
+    usage = data.get('usage') if data else None
+    limit = data.get('limit') if data else None
+    
+    print(f"\n{BOLD}{MAGENTA}=== TRAFFIC USAGE FOR {month} ==={RESET}")
+    
+    # Usage statistics with safe handling
+    if usage and isinstance(usage, dict):
+        total = usage.get('total', 0)
+        traffic_in = usage.get('in', 0)
+        traffic_out = usage.get('out', 0)
+        
+        # Ensure values are numeric
+        total = total if isinstance(total, (int, float)) else 0
+        traffic_in = traffic_in if isinstance(traffic_in, (int, float)) else 0
+        traffic_out = traffic_out if isinstance(traffic_out, (int, float)) else 0
+    else:
+        total = traffic_in = traffic_out = 0
+    
+    print(f"  {BLUE}Total Usage:{RESET} {CYAN}{total:.2f} GB{RESET}")
+    print(f"  {BLUE}Incoming:{RESET} {GREEN}{traffic_in:.2f} GB{RESET}")
+    print(f"  {BLUE}Outgoing:{RESET} {YELLOW}{traffic_out:.2f} GB{RESET}")
+    
+    # Limit information with comprehensive null checking
+    print(f"\n{BOLD}{CYAN}=== LIMITS & STATUS ==={RESET}")
+    
+    if limit and isinstance(limit, dict):
+        monthly_limit = limit.get('monthly', 0)
+        remaining = limit.get('remaining', 0)
+        vm_status = limit.get('vm_status', 'unknown')
+        additional = limit.get('additional')
+        
+        # Ensure numeric values
+        monthly_limit = monthly_limit if isinstance(monthly_limit, (int, float)) else 0
+        remaining = remaining if isinstance(remaining, (int, float)) else 0
+        
+        print(f"  {BLUE}Monthly Limit:{RESET} {BRIGHT_WHITE}{monthly_limit} GB{RESET}")
+        print(f"  {BLUE}Remaining:{RESET} {GREEN}{remaining:.2f} GB{RESET}")
+        
+        if additional is not None:
+            print(f"  {BLUE}Additional:{RESET} {CYAN}{additional} GB{RESET}")
+        else:
+            print(f"  {BLUE}Additional:{RESET} {BRIGHT_BLACK}None{RESET}")
+        
+        # VM Status with color coding
+        if vm_status:
+            status_color = GREEN if vm_status == 'normal' else RED if vm_status == 'limited' else YELLOW
+            print(f"  {BLUE}VM Status:{RESET} {status_color}{vm_status.title()}{RESET}")
+        
+        # Usage percentage and progress bar
+        if monthly_limit > 0:
+            usage_percent = (total / monthly_limit) * 100
+            percent_color = GREEN if usage_percent < 70 else YELLOW if usage_percent < 90 else RED
+            print(f"  {BLUE}Usage Percentage:{RESET} {percent_color}{usage_percent:.1f}%{RESET}")
+            
+            # Progress bar
+            bar_length = 30
+            filled_length = int(bar_length * total / monthly_limit)
+            filled_length = max(0, min(filled_length, bar_length))  # Clamp to valid range
+            bar = '█' * filled_length + '░' * (bar_length - filled_length)
+            bar_color = GREEN if usage_percent < 70 else YELLOW if usage_percent < 90 else RED
+            print(f"  {BLUE}Progress:{RESET} {bar_color}[{bar}]{RESET}")
+    else:
+        print(f"  {BRIGHT_BLACK}No limit information available{RESET}")
+
+def format_traffic_logs(data, month):
+    """Format traffic logs data."""
+    logs = data.get('log', [])
+    
+    print(f"\n{BOLD}{MAGENTA}=== TRAFFIC LOGS FOR {month} ==={RESET}")
+    
+    if logs:
+        print(f"{BOLD}{YELLOW}Found {len(logs)} log entries:{RESET}")
+        
+        # Table header
+        print(f"\n{BOLD}{BLUE}{'Date & Time':<20} {'Incoming (MB)':<15} {'Outgoing (MB)':<15}{RESET}")
+        print(f"{BRIGHT_BLACK}{'─' * 20} {'─' * 15} {'─' * 15}{RESET}")
+        
+        total_in = 0
+        total_out = 0
+        
+        for log_entry in logs:
+            date_str = log_entry.get('date', 'N/A')
+            traffic_in = log_entry.get('in', 0)
+            traffic_out = log_entry.get('out', 0)
+            
+            # Format date
+            if date_str != 'N/A':
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%m-%d %H:%M:%S')
+                except:
+                    formatted_date = date_str[:16]  # Fallback
+            else:
+                formatted_date = 'N/A'
+            
+            # Add to totals
+            if isinstance(traffic_in, (int, float)):
+                total_in += traffic_in
+            if isinstance(traffic_out, (int, float)):
+                total_out += traffic_out
+            
+            # Print log entry
+            print(f"{GREEN}{formatted_date:<20}{RESET} {CYAN}{traffic_in:<15.4f}{RESET} {YELLOW}{traffic_out:<15.4f}{RESET}")
+        
+        # Summary
+        print(f"\n{BOLD}{CYAN}=== LOG SUMMARY ==={RESET}")
+        print(f"  {BLUE}Total Entries:{RESET} {BRIGHT_WHITE}{len(logs)}{RESET}")
+        print(f"  {BLUE}Total Incoming:{RESET} {CYAN}{total_in:.2f} MB{RESET} ({CYAN}{total_in/1024:.2f} GB{RESET})")
+        print(f"  {BLUE}Total Outgoing:{RESET} {YELLOW}{total_out:.2f} MB{RESET} ({YELLOW}{total_out/1024:.2f} GB{RESET})")
+        print(f"  {BLUE}Combined Total:{RESET} {BRIGHT_WHITE}{(total_in + total_out):.2f} MB{RESET} ({BRIGHT_WHITE}{(total_in + total_out)/1024:.2f} GB{RESET})")
+        
+        # Average per entry
+        if len(logs) > 0:
+            avg_in = total_in / len(logs)
+            avg_out = total_out / len(logs)
+            print(f"  {BLUE}Average In/Entry:{RESET} {CYAN}{avg_in:.2f} MB{RESET}")
+            print(f"  {BLUE}Average Out/Entry:{RESET} {YELLOW}{avg_out:.2f} MB{RESET}")
+    else:
+        print(f"  {YELLOW}No traffic logs found{RESET}")
+
+def handle_traffic(api_key, target, action):
+    """Handle traffic requests with proper error handling."""
+    server = find_kvm_server(api_key, target)
+    
+    if not server:
+        print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
+        return
+    
+    server_internal_id = server['internal_id']
+    
+    if action == 'usage':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/traffic/current'
+        try:
+            response = requests.get(url,
+                                    headers = {
+                                        'Content-Type': 'application/x-www-form-urlencoded',
+                                        'X-Fire-Apikey': api_key
+                                    })
+            format_traffic(response)
+        except requests.RequestException as e:
+            print(f"{RED}Network error fetching traffic usage: {e}{RESET}")
+    
+    elif action == 'logs':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/traffic/log'
+        try:
+            response = requests.get(url,
+                                    headers = {
+                                        'Content-Type': 'application/x-www-form-urlencoded',
+                                        'X-Fire-Apikey': api_key
+                                    })
+            format_traffic(response)
+        except requests.RequestException as e:
+            print(f"{RED}Network error fetching traffic logs: {e}{RESET}")
+    
+    else:
+        print(f"{RED}Invalid traffic action: {action}. Valid actions: usage, logs{RESET}")
+
 def get_api_key():
     """Get API key from command line arguments or environment variable."""
     parser = argparse.ArgumentParser(description='24Fire API CLI Tool')
@@ -153,6 +539,20 @@ def get_api_key():
     parser.add_argument('-r', '--restart',
                        help='Restart a KVM server by name or internal ID',
                        type=str)
+    parser.add_argument('-b', '--backup',
+                        help="Backup action: list, create, restore, delete",
+                        type=str,
+                        choices=['list', 'create', 'restore', 'delete'])
+    parser.add_argument('-t', '--target',
+                        help="Target Service (Required by Backup)",
+                        type=str)
+    parser.add_argument('--backup-id',
+                        help="Backup ID (Required for restore/delete operations)",
+                        type=str)
+    parser.add_argument('-T', '--traffic',
+                        help="Traffic action: usage, logs",
+                        type=str,
+                        choices=['usage', 'logs'])
     
     args = parser.parse_args()
     
@@ -167,6 +567,38 @@ def get_api_key():
         elif args.restart:
             control_kvm_server(api_key, args.restart, "restart")
         
+        sys.exit(0)
+    
+    # Handle backup operations
+    if args.backup:
+        api_key = args.api_key or os.getenv("FIRE_API_KEY") or "None"
+        
+        # Check if target is provided
+        if not args.target:
+            print(f"{RED}Error: --target is required for backup operations{RESET}")
+            print(f"{YELLOW}Usage: 24fire -b <action> -t <server_name_or_id>{RESET}")
+            sys.exit(1)
+        
+        # Check if backup_id is required for restore/delete
+        if args.backup in ['restore', 'delete'] and not args.backup_id:
+            print(f"{RED}Error: --backup-id is required for {args.backup} operations{RESET}")
+            print(f"{YELLOW}Usage: 24fire -b {args.backup} -t <server> --backup-id <backup_id>{RESET}")
+            sys.exit(1)
+        
+        handle_backup_request(api_key, args.backup, args.target, args.backup_id)
+        sys.exit(0)
+
+    # Handle traffic operations
+    if args.traffic:
+        api_key = args.api_key or os.getenv("FIRE_API_KEY") or "None"
+        
+        # Check if target is provided
+        if not args.target:
+            print(f"{RED}Error: --target is required for traffic operations{RESET}")
+            print(f"{YELLOW}Usage: python main.py --traffic <action> -t <server_name_or_id>{RESET}")
+            sys.exit(1)
+        
+        handle_traffic(api_key, args.target, args.traffic)
         sys.exit(0)
     
     # Priority: command line argument > environment variable > None
