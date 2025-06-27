@@ -524,6 +524,571 @@ def handle_traffic(api_key, target, action):
     else:
         print(f"{RED}Invalid traffic action: {action}. Valid actions: usage, logs{RESET}")
 
+def format_monitoring_outages(data):
+    """Format monitoring outages data with comprehensive structure."""
+    if not data or 'data' not in data:
+        print(f"{RED}No monitoring data available{RESET}")
+        return
+    
+    monitoring_data = data['data']
+    statistics = monitoring_data.get('statistic', {})
+    incidences = monitoring_data.get('incidences', [])
+    
+    print(f"\n{BOLD}{CYAN}=== MONITORING OUTAGES ==={RESET}")
+    print(f"{GREEN}Status: {data.get('status', 'N/A')}{RESET}")
+    print(f"{BLUE}Message: {data.get('message', 'N/A')}{RESET}")
+    
+    # Statistics section
+    if statistics:
+        print(f"\n{BOLD}{MAGENTA}=== AVAILABILITY STATISTICS ==={RESET}")
+        
+        periods = [
+            ('LAST_24_HOURS', '24 Hours'),
+            ('LAST_7_DAYS', '7 Days'),
+            ('LAST_14_DAYS', '14 Days'),
+            ('LAST_30_DAYS', '30 Days'),
+            ('LAST_90_DAYS', '90 Days'),
+            ('LAST_180_DAYS', '180 Days')
+        ]
+        
+        for period_key, period_name in periods:
+            if period_key in statistics:
+                stat = statistics[period_key]
+                availability = stat.get('availability', 0)
+                downtime = stat.get('downtime', 0)
+                incidences_count = stat.get('incidences', 0)
+                longest = stat.get('longest_incidence', 0)
+                average = stat.get('average_incidence', 0)
+                
+                # Color code availability
+                if availability >= 99.9:
+                    avail_color = GREEN
+                elif availability >= 99.0:
+                    avail_color = YELLOW
+                else:
+                    avail_color = RED
+                
+                print(f"\n{BOLD}{BLUE}=== {period_name.upper()} ==={RESET}")
+                print(f"  {BLUE}Availability:{RESET} {avail_color}{availability:.4f}%{RESET}")
+                print(f"  {BLUE}Total Downtime:{RESET} {RED}{downtime} minutes{RESET}")
+                print(f"  {BLUE}Incidents:{RESET} {YELLOW}{incidences_count}{RESET}")
+                print(f"  {BLUE}Longest Incident:{RESET} {RED}{longest} minutes{RESET}")
+                print(f"  {BLUE}Average Incident:{RESET} {CYAN}{average:.2f} minutes{RESET}")
+    
+    # Incidents section
+    if incidences:
+        print(f"\n{BOLD}{MAGENTA}=== INCIDENT HISTORY ==={RESET}")
+        print(f"{BOLD}{YELLOW}Found {len(incidences)} incident(s):{RESET}")
+        
+        # Sort incidents by start date (most recent first)
+        sorted_incidents = sorted(incidences, key=lambda x: x.get('start', ''), reverse=True)
+        
+        for idx, incident in enumerate(sorted_incidents, 1):
+            start_time = incident.get('start', 'N/A')
+            end_time = incident.get('end')
+            downtime = incident.get('downtime', 0)
+            incident_type = incident.get('type', 'UNKNOWN')
+            
+            # Format dates
+            if start_time != 'N/A':
+                try:
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    formatted_start = start_dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+                except:
+                    formatted_start = start_time
+            else:
+                formatted_start = 'N/A'
+            
+            if end_time:
+                try:
+                    end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                    formatted_end = end_dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    status_text = "Resolved"
+                    status_color = GREEN
+                    status_icon = "✓"
+                except:
+                    formatted_end = end_time
+                    status_text = "Resolved"
+                    status_color = GREEN
+                    status_icon = "✓"
+            else:
+                formatted_end = "Ongoing"
+                status_text = "Ongoing"
+                status_color = RED
+                status_icon = "⚠"
+            
+            # Color code incident type
+            if incident_type == 'PING_TIMEOUT':
+                type_color = YELLOW
+                type_icon = "🔌"
+            elif incident_type == 'VM_STOPPED':
+                type_color = RED
+                type_icon = "⏹"
+            else:
+                type_color = CYAN
+                type_icon = "❓"
+            
+            print(f"\n{BOLD}{CYAN}=== INCIDENT #{idx} ==={RESET}")
+            print(f"  {BLUE}Type:{RESET} {type_color}{type_icon} {incident_type.replace('_', ' ').title()}{RESET}")
+            print(f"  {BLUE}Status:{RESET} {status_color}{status_icon} {status_text}{RESET}")
+            print(f"  {BLUE}Started:{RESET} {BRIGHT_WHITE}{formatted_start}{RESET}")
+            print(f"  {BLUE}Ended:{RESET} {BRIGHT_WHITE}{formatted_end}{RESET}")
+            print(f"  {BLUE}Duration:{RESET} {RED}{downtime} minutes{RESET}")
+            
+            # Add separator except for last incident
+            if idx < len(sorted_incidents):
+                print(f"  {BRIGHT_BLACK}{'─' * 50}{RESET}")
+        
+        # Summary
+        total_downtime = sum(incident.get('downtime', 0) for incident in incidences)
+        ongoing_incidents = sum(1 for incident in incidences if not incident.get('end'))
+        resolved_incidents = len(incidences) - ongoing_incidents
+        
+        # Incident type breakdown
+        type_counts = {}
+        for incident in incidences:
+            incident_type = incident.get('type', 'UNKNOWN')
+            type_counts[incident_type] = type_counts.get(incident_type, 0) + 1
+        
+        print(f"\n{BOLD}{CYAN}=== INCIDENT SUMMARY ==={RESET}")
+        print(f"  {BLUE}Total Incidents:{RESET} {BRIGHT_WHITE}{len(incidences)}{RESET}")
+        print(f"  {BLUE}Resolved:{RESET} {GREEN}{resolved_incidents}{RESET}")
+        if ongoing_incidents > 0:
+            print(f"  {BLUE}Ongoing:{RESET} {RED}{ongoing_incidents}{RESET}")
+        print(f"  {BLUE}Total Downtime:{RESET} {RED}{total_downtime} minutes{RESET} ({RED}{total_downtime/60:.1f} hours{RESET})")
+        
+        if type_counts:
+            print(f"\n{BOLD}{CYAN}=== INCIDENT TYPES ==={RESET}")
+            for incident_type, count in type_counts.items():
+                type_display = incident_type.replace('_', ' ').title()
+                if incident_type == 'PING_TIMEOUT':
+                    type_color = YELLOW
+                elif incident_type == 'VM_STOPPED':
+                    type_color = RED
+                else:
+                    type_color = CYAN
+                print(f"  {BLUE}{type_display}:{RESET} {type_color}{count}{RESET}")
+    else:
+        print(f"  {GREEN}No incidents found - Perfect uptime! 🎉{RESET}")
+
+def format_monitoring_readings(data):
+    """Format monitoring readings data with comprehensive structure."""
+    if not data or 'data' not in data:
+        print(f"{RED}No monitoring data available{RESET}")
+        return
+    
+    timings = data['data'].get('timings', [])
+    
+    print(f"\n{BOLD}{CYAN}=== MONITORING READINGS ==={RESET}")
+    print(f"{GREEN}Status: {data.get('status', 'N/A')}{RESET}")
+    print(f"{BLUE}Message: {data.get('message', 'N/A')}{RESET}")
+    
+    if timings:
+        print(f"\n{BOLD}{YELLOW}Found {len(timings)} monitoring readings:{RESET}")
+        
+        # Sort by date (most recent first)
+        sorted_timings = sorted(timings, key=lambda x: x.get('date', ''), reverse=True)
+        
+        # Table header
+        print(f"\n{BOLD}{BLUE}{'Date & Time':<20} {'CPU %':<8} {'Memory %':<10} {'Ping (ms)':<10}{RESET}")
+        print(f"{BRIGHT_BLACK}{'─' * 20} {'─' * 8} {'─' * 10} {'─' * 10}{RESET}")
+        
+        cpu_values = []
+        mem_values = []
+        ping_values = []
+        
+        for timing in sorted_timings:
+            date_str = timing.get('date', 'N/A')
+            cpu = timing.get('cpu', 'N/A')
+            mem = timing.get('mem', 'N/A')
+            ping = timing.get('ping', 'N/A')
+            
+            # Format date
+            if date_str != 'N/A':
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime('%m-%d %H:%M:%S')
+                except:
+                    formatted_date = date_str[:16]
+            else:
+                formatted_date = 'N/A'
+            
+            # Color code values based on thresholds
+            if cpu != 'N/A':
+                try:
+                    cpu_float = float(cpu)
+                    cpu_values.append(cpu_float)
+                    if cpu_float < 50:
+                        cpu_color = GREEN
+                    elif cpu_float < 80:
+                        cpu_color = YELLOW
+                    else:
+                        cpu_color = RED
+                    cpu_display = f"{cpu_float:.1f}%"
+                except:
+                    cpu_color = BRIGHT_BLACK
+                    cpu_display = str(cpu)
+            else:
+                cpu_color = BRIGHT_BLACK
+                cpu_display = 'N/A'
+            
+            if mem != 'N/A':
+                try:
+                    mem_float = float(mem)
+                    mem_values.append(mem_float)
+                    if mem_float < 70:
+                        mem_color = GREEN
+                    elif mem_float < 90:
+                        mem_color = YELLOW
+                    else:
+                        mem_color = RED
+                    mem_display = f"{mem_float:.1f}%"
+                except:
+                    mem_color = BRIGHT_BLACK
+                    mem_display = str(mem)
+            else:
+                mem_color = BRIGHT_BLACK
+                mem_display = 'N/A'
+            
+            if ping != 'N/A':
+                try:
+                    ping_int = int(ping)
+                    ping_values.append(ping_int)
+                    if ping_int < 50:
+                        ping_color = GREEN
+                    elif ping_int < 100:
+                        ping_color = YELLOW
+                    else:
+                        ping_color = RED
+                    ping_display = f"{ping_int}ms"
+                except:
+                    ping_color = BRIGHT_BLACK
+                    ping_display = str(ping)
+            else:
+                ping_color = BRIGHT_BLACK
+                ping_display = 'N/A'
+            
+            print(f"{BRIGHT_WHITE}{formatted_date:<20}{RESET} {cpu_color}{cpu_display:<8}{RESET} {mem_color}{mem_display:<10}{RESET} {ping_color}{ping_display:<10}{RESET}")
+        
+        # Statistics summary
+        if cpu_values or mem_values or ping_values:
+            print(f"\n{BOLD}{CYAN}=== PERFORMANCE SUMMARY ==={RESET}")
+            
+            if cpu_values:
+                avg_cpu = sum(cpu_values) / len(cpu_values)
+                max_cpu = max(cpu_values)
+                min_cpu = min(cpu_values)
+                print(f"  {BLUE}CPU Usage:{RESET}")
+                print(f"    {BLUE}Average:{RESET} {CYAN}{avg_cpu:.2f}%{RESET}")
+                print(f"    {BLUE}Maximum:{RESET} {RED}{max_cpu:.2f}%{RESET}")
+                print(f"    {BLUE}Minimum:{RESET} {GREEN}{min_cpu:.2f}%{RESET}")
+            
+            if mem_values:
+                avg_mem = sum(mem_values) / len(mem_values)
+                max_mem = max(mem_values)
+                min_mem = min(mem_values)
+                print(f"  {BLUE}Memory Usage:{RESET}")
+                print(f"    {BLUE}Average:{RESET} {CYAN}{avg_mem:.2f}%{RESET}")
+                print(f"    {BLUE}Maximum:{RESET} {RED}{max_mem:.2f}%{RESET}")
+                print(f"    {BLUE}Minimum:{RESET} {GREEN}{min_mem:.2f}%{RESET}")
+            
+            if ping_values:
+                avg_ping = sum(ping_values) / len(ping_values)
+                max_ping = max(ping_values)
+                min_ping = min(ping_values)
+                print(f"  {BLUE}Ping Response:{RESET}")
+                print(f"    {BLUE}Average:{RESET} {CYAN}{avg_ping:.1f}ms{RESET}")
+                print(f"    {BLUE}Maximum:{RESET} {RED}{max_ping}ms{RESET}")
+                print(f"    {BLUE}Minimum:{RESET} {GREEN}{min_ping}ms{RESET}")
+            
+            # Performance indicators
+            print(f"\n{BOLD}{CYAN}=== PERFORMANCE INDICATORS ==={RESET}")
+            
+            if cpu_values:
+                high_cpu_count = sum(1 for cpu in cpu_values if cpu > 80)
+                if high_cpu_count > 0:
+                    print(f"  {RED}⚠ High CPU usage detected in {high_cpu_count} readings{RESET}")
+                else:
+                    print(f"  {GREEN}✓ CPU usage within normal range{RESET}")
+            
+            if mem_values:
+                high_mem_count = sum(1 for mem in mem_values if mem > 90)
+                if high_mem_count > 0:
+                    print(f"  {RED}⚠ High memory usage detected in {high_mem_count} readings{RESET}")
+                else:
+                    print(f"  {GREEN}✓ Memory usage within normal range{RESET}")
+
+            if ping_values:
+                high_ping_count = sum(1 for ping in ping_values if ping > 100)
+                if high_ping_count > 0:
+                    print(f"  {RED}⚠ High ping detected in {high_ping_count} readings{RESET}")
+                else:
+                    print(f"  {GREEN}✓ Network latency within acceptable range{RESET}")
+    else:
+        print(f"  {YELLOW}No monitoring readings found{RESET}")
+
+def handle_monitoring(api_key, target, action):
+    """Handle monitoring requests with proper error handling."""
+    server = find_kvm_server(api_key, target)
+    
+    if not server:
+        print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
+        return
+    
+    server_internal_id = server['internal_id']
+    
+    if action == 'outages':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/monitoring/incidences'
+        try:
+            response = requests.get(url,
+                                    headers = {
+                                        'Content-Type': 'application/x-www-form-urlencoded',
+                                        'X-Fire-Apikey': api_key
+                                    })
+            
+            if response.status_code == 200:
+                json_response = response.json()
+                if json_response.get('status') == 'success':
+                    format_monitoring_outages(json_response)
+                else:
+                    print(f"{RED}Failed to fetch monitoring outages: {json_response.get('message', 'Unknown error')}{RESET}")
+            else:
+                print(f"{RED}Failed to fetch monitoring outages for {server['name']} - HTTP {response.status_code}{RESET}")
+                
+        except requests.RequestException as e:
+            print(f"{RED}Network error fetching monitoring outages: {e}{RESET}")
+    
+    elif action == 'reading':
+        url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/monitoring/timings'
+        try:
+            response = requests.get(url,
+                                    headers = {
+                                        'Content-Type': 'application/x-www-form-urlencoded',
+                                        'X-Fire-Apikey': api_key
+                                    })
+            
+            if response.status_code == 200:
+                json_response = response.json()
+                if json_response.get('status') == 'success':
+                    format_monitoring_readings(json_response)
+                else:
+                    print(f"{RED}Failed to fetch monitoring readings: {json_response.get('message', 'Unknown error')}{RESET}")
+            else:
+                print(f"{RED}Failed to fetch monitoring readings for {server['name']} - HTTP {response.status_code}{RESET}")
+                
+        except requests.RequestException as e:
+            print(f"{RED}Network error fetching monitoring readings: {e}{RESET}")
+    
+    else:
+        print(f"{RED}Invalid monitoring action: {action}. Valid actions: reading, outages{RESET}")
+
+def format_ddos_protection(data):
+    """Format DDoS protection data with comprehensive structure."""
+    if not data or 'data' not in data:
+        print(f"{RED}No DDoS protection data available{RESET}")
+        return
+    
+    ddos_data = data['data']
+    
+    print(f"\n{BOLD}{CYAN}=== DDOS PROTECTION STATUS ==={RESET}")
+    print(f"{GREEN}Status: {data.get('status', 'N/A')}{RESET}")
+    print(f"{BLUE}Message: {data.get('message', 'N/A')}{RESET}")
+    
+    if ddos_data:
+        ip_count = len(ddos_data)
+        print(f"\n{BOLD}{YELLOW}Found {ip_count} IP address(es) with DDoS protection:{RESET}")
+        
+        # Track statistics
+        layer4_stats = {'off': 0, 'dynamic': 0, 'permanent': 0}
+        layer7_stats = {'off': 0, 'on': 0}
+        
+        for idx, (ip_address, protection_settings) in enumerate(ddos_data.items(), 1):
+            layer4_status = protection_settings.get('layer4', 'unknown')
+            layer7_status = protection_settings.get('layer7', 'unknown')
+            
+            # Update statistics
+            if layer4_status in layer4_stats:
+                layer4_stats[layer4_status] += 1
+            if layer7_status in layer7_stats:
+                layer7_stats[layer7_status] += 1
+            
+            print(f"\n{BOLD}{MAGENTA}=== IP ADDRESS #{idx} ==={RESET}")
+            print(f"  {BLUE}IP Address:{RESET} {BRIGHT_WHITE}{ip_address}{RESET}")
+            
+            # Layer 4 Protection with color coding and icons
+            if layer4_status == 'off':
+                layer4_color = RED
+                layer4_icon = "❌"
+                layer4_desc = "Disabled"
+            elif layer4_status == 'dynamic':
+                layer4_color = YELLOW
+                layer4_icon = "🔄"
+                layer4_desc = "Dynamic (Auto-enabled when attack detected)"
+            elif layer4_status == 'permanent':
+                layer4_color = GREEN
+                layer4_icon = "🛡️"
+                layer4_desc = "Always Active"
+            else:
+                layer4_color = BRIGHT_BLACK
+                layer4_icon = "❓"
+                layer4_desc = "Unknown Status"
+            
+            print(f"  {BLUE}Layer 4 Protection:{RESET} {layer4_color}{layer4_icon} {layer4_status.title()}{RESET}")
+            print(f"    {BRIGHT_BLACK}└─ {layer4_desc}{RESET}")
+            
+            # Layer 7 Protection with color coding and icons
+            if layer7_status == 'off':
+                layer7_color = RED
+                layer7_icon = "❌"
+                layer7_desc = "Disabled"
+            elif layer7_status == 'on':
+                layer7_color = GREEN
+                layer7_icon = "🛡️"
+                layer7_desc = "Active"
+            else:
+                layer7_color = BRIGHT_BLACK
+                layer7_icon = "❓"
+                layer7_desc = "Unknown Status"
+            
+            print(f"  {BLUE}Layer 7 Protection:{RESET} {layer7_color}{layer7_icon} {layer7_status.title()}{RESET}")
+            print(f"    {BRIGHT_BLACK}└─ {layer7_desc}{RESET}")
+            
+            # Protection level indicator
+            protection_level = 0
+            if layer4_status == 'dynamic':
+                protection_level += 1
+            elif layer4_status == 'permanent':
+                protection_level += 2
+            if layer7_status == 'on':
+                protection_level += 2
+            
+            if protection_level == 0:
+                level_color = RED
+                level_text = "No Protection"
+                level_icon = "🚨"
+            elif protection_level <= 2:
+                level_color = YELLOW
+                level_text = "Basic Protection"
+                level_icon = "⚠️"
+            elif protection_level <= 3:
+                level_color = CYAN
+                level_text = "Good Protection"
+                level_icon = "🔒"
+            else:
+                level_color = GREEN
+                level_text = "Maximum Protection"
+                level_icon = "🛡️"
+            
+            print(f"  {BLUE}Protection Level:{RESET} {level_color}{level_icon} {level_text}{RESET}")
+            
+            # Add separator except for last IP
+            if idx < ip_count:
+                print(f"  {BRIGHT_BLACK}{'─' * 50}{RESET}")
+        
+        # Summary statistics
+        print(f"\n{BOLD}{CYAN}=== PROTECTION SUMMARY ==={RESET}")
+        print(f"  {BLUE}Total IP Addresses:{RESET} {BRIGHT_WHITE}{ip_count}{RESET}")
+        
+        print(f"\n{BOLD}{BLUE}Layer 4 Protection Status:{RESET}")
+        if layer4_stats['permanent'] > 0:
+            print(f"  {GREEN}🛡️  Permanent:{RESET} {GREEN}{layer4_stats['permanent']}{RESET}")
+        if layer4_stats['dynamic'] > 0:
+            print(f"  {YELLOW}🔄 Dynamic:{RESET} {YELLOW}{layer4_stats['dynamic']}{RESET}")
+        if layer4_stats['off'] > 0:
+            print(f"  {RED}❌ Disabled:{RESET} {RED}{layer4_stats['off']}{RESET}")
+        
+        print(f"\n{BOLD}{BLUE}Layer 7 Protection Status:{RESET}")
+        if layer7_stats['on'] > 0:
+            print(f"  {GREEN}🛡️  Active:{RESET} {GREEN}{layer7_stats['on']}{RESET}")
+        if layer7_stats['off'] > 0:
+            print(f"  {RED}❌ Disabled:{RESET} {RED}{layer7_stats['off']}{RESET}")
+        
+        # Security recommendations
+        print(f"\n{BOLD}{CYAN}=== SECURITY RECOMMENDATIONS ==={RESET}")
+        
+        recommendations = []
+        if layer4_stats['off'] > 0:
+            recommendations.append(f"{YELLOW}⚠️  Consider enabling Layer 4 protection for {layer4_stats['off']} IP(s){RESET}")
+        
+        if layer7_stats['off'] > 0:
+            recommendations.append(f"{YELLOW}⚠️  Consider enabling Layer 7 protection for {layer7_stats['off']} IP(s){RESET}")
+        
+        if layer4_stats['dynamic'] > 0:
+            recommendations.append(f"{CYAN}💡 {layer4_stats['dynamic']} IP(s) have dynamic Layer 4 protection - consider permanent for high-risk servers{RESET}")
+        
+        if not recommendations:
+            recommendations.append(f"{GREEN}✅ All IP addresses have optimal DDoS protection configured{RESET}")
+        
+        for recommendation in recommendations:
+            print(f"  {recommendation}")
+        
+        # Protection effectiveness indicator
+        total_protected = layer4_stats['permanent'] + layer4_stats['dynamic'] + layer7_stats['on']
+        total_possible = ip_count * 2  # Each IP can have both Layer 4 and Layer 7
+        protection_percentage = (total_protected / total_possible) * 100 if total_possible > 0 else 0
+        
+        print(f"\n{BOLD}{CYAN}=== OVERALL PROTECTION SCORE ==={RESET}")
+        if protection_percentage >= 80:
+            score_color = GREEN
+            score_icon = "🛡️"
+            score_text = "Excellent"
+        elif protection_percentage >= 60:
+            score_color = CYAN
+            score_icon = "🔒"
+            score_text = "Good"
+        elif protection_percentage >= 40:
+            score_color = YELLOW
+            score_icon = "⚠️"
+            score_text = "Fair"
+        else:
+            score_color = RED
+            score_icon = "🚨"
+            score_text = "Poor"
+        
+        # Progress bar for protection score
+        bar_length = 20
+        filled_length = int(bar_length * protection_percentage / 100)
+        filled_length = max(0, min(filled_length, bar_length))
+        bar = '█' * filled_length + '░' * (bar_length - filled_length)
+        
+        print(f"  {BLUE}Protection Score:{RESET} {score_color}{score_icon} {protection_percentage:.1f}% - {score_text}{RESET}")
+        print(f"  {BLUE}Progress:{RESET} {score_color}[{bar}]{RESET}")
+        
+    else:
+        print(f"  {YELLOW}No DDoS protection information available{RESET}")
+
+def handle_ddos(api_key, target):
+    """Handle DDoS protection requests with proper error handling."""
+    server = find_kvm_server(api_key, target)
+    
+    if not server:
+        print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
+        return
+    
+    server_internal_id = server['internal_id']
+    
+    url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/ddos'
+    try:
+        response = requests.get(url,
+                                headers = {
+                                    'Content-Type': 'application/x-www-form-urlencoded',
+                                    'X-Fire-Apikey': api_key
+                                })
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                format_ddos_protection(json_response)
+            else:
+                print(f"{RED}Failed to fetch DDoS protection settings: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}Failed to fetch DDoS protection settings for {server['name']} - HTTP {response.status_code}{RESET}")
+            
+    except requests.RequestException as e:
+        print(f"{RED}Network error fetching DDoS protection settings: {e}{RESET}")
+
 def get_api_key():
     """Get API key from command line arguments or environment variable."""
     parser = argparse.ArgumentParser(description='24Fire API CLI Tool')
@@ -553,6 +1118,13 @@ def get_api_key():
                         help="Traffic action: usage, logs",
                         type=str,
                         choices=['usage', 'logs'])
+    parser.add_argument('-m', '--monitoring',
+                        help="Displays Monitoring Info (requires: -t, --target)",
+                        type=str,
+                        choices=['reading', 'outages'])
+    parser.add_argument('-d', '--ddos',
+                        help="Display DDoS protection settings (requires: -t, --target)",
+                        action='store_true')
     
     args = parser.parse_args()
     
@@ -601,6 +1173,31 @@ def get_api_key():
         handle_traffic(api_key, args.target, args.traffic)
         sys.exit(0)
     
+    if args.monitoring:
+        api_key = args.api_key or os.getenv("FIRE_API_KEY") or "None"
+
+        # Check if target is provided
+        if not args.target:
+            print(f"{RED}Error: --target is required for monitoring operations{RESET}")
+            print(f"{YELLOW}Usage: python main.py --monitoring <action> -t <server_name_or_id>{RESET}")
+            sys.exit(1)
+        
+        handle_monitoring(api_key, args.target, args.monitoring)
+        sys.exit(0)
+
+    # Handle DDoS operations
+    if args.ddos:
+        api_key = args.api_key or os.getenv("FIRE_API_KEY") or "None"
+
+        # Check if target is provided
+        if not args.target:
+            print(f"{RED}Error: --target is required for DDoS operations{RESET}")
+            print(f"{YELLOW}Usage: python main.py --ddos -t <server_name_or_id>{RESET}")
+            sys.exit(1)
+        
+        handle_ddos(api_key, args.target)
+        sys.exit(0)
+
     # Priority: command line argument > environment variable > None
     if args.api_key:
         return args.api_key
