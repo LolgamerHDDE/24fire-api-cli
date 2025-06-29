@@ -3,6 +3,10 @@ import json
 import sys
 import os
 import argparse
+import subprocess
+import tempfile
+import urllib.request
+import stat
 from dotenv import load_dotenv
 
 # ANSI escape codes for CLI colors
@@ -1089,6 +1093,64 @@ def handle_ddos(api_key, target):
     except requests.RequestException as e:
         print(f"{RED}Network error fetching DDoS protection settings: {e}{RESET}")
 
+def install_automations(api_key, target, script_url=None):
+    """Install automations script on target server."""
+    server = find_kvm_server(api_key, target)
+    
+    if not server:
+        print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
+        return
+    
+    # Default to your automations repository
+    if not script_url:
+        script_url = "https://raw.githubusercontent.com/LolgamerHDDE/24fire-api-cli-automations/main/install.sh"
+    
+    print(f"{BLUE}Installing automations on {server['name']}...{RESET}")
+    print(f"{YELLOW}This will download and execute: {script_url}{RESET}")
+    
+    # Confirm with user
+    confirm = input(f"{YELLOW}Continue? (y/N): {RESET}").strip().lower()
+    if confirm != 'y':
+        print(f"{YELLOW}Installation cancelled.{RESET}")
+        return
+    
+    try:
+        # Download the script
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sh', delete=False) as temp_file:
+            print(f"{BLUE}Downloading installation script...{RESET}")
+            with urllib.request.urlopen(script_url) as response:
+                script_content = response.read().decode('utf-8')
+            
+            temp_file.write(script_content)
+            temp_file.flush()
+            
+            # Make executable
+            os.chmod(temp_file.name, stat.S_IRWXU | stat.S_IRGRP | stat.S_IROTH)
+            
+            print(f"{BLUE}Executing installation script...{RESET}")
+            
+            # Execute the script
+            result = subprocess.run(['bash', temp_file.name], 
+                                  capture_output=True, 
+                                  text=True)
+            
+            if result.returncode == 0:
+                print(f"{GREEN}✓ Automations installed successfully on {server['name']}{RESET}")
+                if result.stdout:
+                    print(f"{CYAN}Output:{RESET}")
+                    print(result.stdout)
+            else:
+                print(f"{RED}✗ Installation failed{RESET}")
+                if result.stderr:
+                    print(f"{RED}Error:{RESET}")
+                    print(result.stderr)
+            
+            # Clean up
+            os.unlink(temp_file.name)
+            
+    except Exception as e:
+        print(f"{RED}Error during installation: {e}{RESET}")
+
 def get_api_key():
     """Get API key from command line arguments or environment variable."""
     parser = argparse.ArgumentParser(description='24Fire API CLI Tool')
@@ -1125,6 +1187,12 @@ def get_api_key():
     parser.add_argument('-d', '--ddos',
                         help="Display DDoS protection settings (requires: -t, --target)",
                         action='store_true')
+    parser.add_argument('-I', '--install',
+                        help="Install automations on target server (requires: -t, --target)",
+                        action='store_true')
+    parser.add_argument('--script-url',
+                        help="Custom script URL for automations installation",
+                        type=str)
     
     args = parser.parse_args()
     
@@ -1183,6 +1251,18 @@ def get_api_key():
             sys.exit(1)
         
         handle_monitoring(api_key, args.target, args.monitoring)
+        sys.exit(0)
+
+    # Handle automations installation
+    if args.install:
+        api_key = args.api_key or os.getenv("FIRE_API_KEY") or "None"
+        
+        if not args.target:
+            print(f"{RED}Error: --target is required for automations installation{RESET}")
+            print(f"{YELLOW}Usage: 24fire --install-automations -t <server_name_or_id>{RESET}")
+            sys.exit(1)
+        
+        install_automations(api_key, args.target, args.script_url)
         sys.exit(0)
 
     # Handle DDoS operations
@@ -1251,7 +1331,7 @@ def request_data(api_key: str):
 
 def fetch_infos(api_key, internal_id, service_type):
     """Fetch service infos from API."""
-    kvm_url = f"https://manage.24fire.de/api/kvm/{internal_id}/status"
+    kvm_url = f"https://manage.24fire.de/api/kvm/{internal_id}/config"
     webspace_url = f"https://manage.24fire.de/api/webspace/{internal_id}"
     domain_url = f"https://manage.24fire.de/api/domain/{internal_id}"
 
