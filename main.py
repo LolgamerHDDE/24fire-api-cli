@@ -1101,6 +1101,10 @@ def install_automations(api_key, target, script_url=None):
         print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
         return
     
+    if 1==1:
+        print(f"{RED}The Automations system is not finished yet. We are Sorry! :({RESET}")
+        sys.exit(0)
+    
     # Default to your automations repository
     if not script_url:
         script_url = "https://raw.githubusercontent.com/LolgamerHDDE/24fire-api-cli-automations/main/install.sh"
@@ -1151,6 +1155,281 @@ def install_automations(api_key, target, script_url=None):
     except Exception as e:
         print(f"{RED}Error during installation: {e}{RESET}")
 
+def find_domain(api_key, domain_identifier):
+    """Find domain by name or internal_id and return domain info."""
+    try:
+        # Make direct API call to get raw service data
+        url = 'https://manage.24fire.de/api/account/services'
+        response = requests.get(url, headers={'X-Fire-Apikey': api_key})
+        
+        if response.status_code != 200:
+            return None
+            
+        json_response = response.json()
+        services = json_response.get('data', {}).get('services', {})
+        
+        # Look specifically in the DOMAIN section
+        domains = services.get('DOMAIN', [])
+        
+        for domain in domains:
+            if (domain['name'] == domain_identifier or 
+                domain['internal_id'] == domain_identifier):
+                # Return domain info with type added for consistency
+                domain_info = domain.copy()
+                domain_info['type'] = 'DOMAIN'
+                return domain_info
+        
+        return None
+    except Exception as e:
+        print(f"{RED}Error finding domain: {e}{RESET}")
+        return None
+    
+def handle_dns_remove(api_key, target, record_id):
+    """Remove a DNS record from a domain."""
+    domain = find_domain(api_key, target)
+    
+    if not domain:
+        print(f"{RED}Domain '{target}' not found.{RESET}")
+        return
+    
+    domain_internal_id = domain['internal_id']
+    
+    url = f'https://manage.24fire.de/api/domain/{domain_internal_id}/dns/remove'
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Fire-Apikey': api_key
+    }
+    data = {'record_id': record_id}
+    
+    try:
+        response = requests.delete(url, headers=headers, data=data)
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                print(f"{GREEN}✓ DNS record removed successfully from {domain['name']}{RESET}")
+                print(f"{BLUE}Message: {json_response.get('message', 'DNS record removed')}{RESET}")
+            else:
+                print(f"{RED}✗ Failed to remove DNS record: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}✗ Failed to remove DNS record - HTTP {response.status_code}{RESET}")
+            
+    except requests.RequestException as e:
+        print(f"{RED}✗ Network error removing DNS record: {e}{RESET}")
+
+def handle_dns_add(api_key, target, dns_type, name, data):
+    """Add a DNS record to a domain."""
+    domain = find_domain(api_key, target)
+    
+    if not domain:
+        print(f"{RED}Domain '{target}' not found.{RESET}")
+        return
+    
+    domain_internal_id = domain['internal_id']
+    
+    url = f'https://manage.24fire.de/api/domain/{domain_internal_id}/dns/add'
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Fire-Apikey': api_key
+    }
+    request_data = {
+        'type': dns_type,
+        'name': name,
+        'data': data
+    }
+    
+    try:
+        response = requests.put(url, headers=headers, data=request_data)
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                print(f"{GREEN}✓ DNS record added successfully to {domain['name']}{RESET}")
+                print(f"{BLUE}Type: {dns_type}, Name: {name}, Data: {data}{RESET}")
+                print(f"{BLUE}Message: {json_response.get('message', 'DNS record added')}{RESET}")
+            else:
+                print(f"{RED}✗ Failed to add DNS record: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}✗ Failed to add DNS record - HTTP {response.status_code}{RESET}")
+            
+    except requests.RequestException as e:
+        print(f"{RED}✗ Network error adding DNS record: {e}{RESET}")
+
+def handle_dns_edit(api_key, target, record_id, dns_type, name, data):
+    """Edit a DNS record in a domain."""
+    domain = find_domain(api_key, target)
+    
+    if not domain:
+        print(f"{RED}Domain '{target}' not found.{RESET}")
+        return
+    
+    domain_internal_id = domain['internal_id']
+    
+    url = f'https://manage.24fire.de/api/domain/{domain_internal_id}/dns/edit'
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Fire-Apikey': api_key
+    }
+    request_data = {
+        'record_id': record_id,
+        'type': dns_type,
+        'name': name,
+        'data': data
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, data=request_data)
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                print(f"{GREEN}✓ DNS record edited successfully in {domain['name']}{RESET}")
+                print(f"{BLUE}Record ID: {record_id}, Type: {dns_type}, Name: {name}, Data: {data}{RESET}")
+                print(f"{BLUE}Message: {json_response.get('message', 'DNS record changed')}{RESET}")
+            else:
+                print(f"{RED}✗ Failed to edit DNS record: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}✗ Failed to edit DNS record - HTTP {response.status_code}{RESET}")
+            
+    except requests.RequestException as e:
+        print(f"{RED}✗ Network error editing DNS record: {e}{RESET}")
+
+def handle_dns_list(api_key, target):
+    """List all DNS records for a domain."""
+    domain = find_domain(api_key, target)
+    
+    if not domain:
+        print(f"{RED}Domain '{target}' not found.{RESET}")
+        return
+    
+    domain_internal_id = domain['internal_id']
+    
+    url = f'https://manage.24fire.de/api/domain/{domain_internal_id}/dns'
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Fire-Apikey': api_key
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                format_dns_records(json_response, domain['name'])
+            else:
+                print(f"{RED}Failed to fetch DNS records: {json_response.get('message', 'Unknown error')}{RESET}")
+        else:
+            print(f"{RED}Failed to fetch DNS records for {domain['name']} - HTTP {response.status_code}{RESET}")
+            
+    except requests.RequestException as e:
+        print(f"{RED}Network error fetching DNS records: {e}{RESET}")
+
+def format_dns_records(data, domain_name):
+    """Format DNS records data with comprehensive structure."""
+    if not data or 'data' not in data:
+        print(f"{RED}No DNS data available{RESET}")
+        return
+    
+    dns_records = data['data']
+    
+    print(f"\n{BOLD}{CYAN}=== DNS RECORDS FOR {domain_name.upper()} ==={RESET}")
+    print(f"{GREEN}Status: {data.get('status', 'N/A')}{RESET}")
+    print(f"{BLUE}Message: {data.get('message', 'N/A')}{RESET}")
+    
+    if dns_records:
+        print(f"\n{BOLD}{YELLOW}Found {len(dns_records)} DNS record(s):{RESET}")
+        
+        # Table header
+        print(f"\n{BOLD}{BLUE}{'Record ID':<12} {'Type':<8} {'Name':<20} {'Data':<35} {'TTL':<8}{RESET}")
+        print(f"{BRIGHT_BLACK}{'─' * 12} {'─' * 8} {'─' * 20} {'─' * 35} {'─' * 8}{RESET}")
+        
+        # Group records by type for statistics
+        record_types = {}
+        
+        for record in dns_records:
+            record_id = record.get('record_id', 'N/A')
+            record_type = record.get('type', 'N/A')
+            record_name = record.get('name', 'N/A')
+            record_data = record.get('data', 'N/A')
+            record_ttl = record.get('ttl', 'N/A')
+            
+            # Count record types
+            if record_type in record_types:
+                record_types[record_type] += 1
+            else:
+                record_types[record_type] = 1
+            
+            # Color code by record type
+            if record_type == 'A':
+                type_color = GREEN
+                type_icon = "🌐"
+            elif record_type == 'AAAA':
+                type_color = CYAN
+                type_icon = "🌐"
+            elif record_type == 'CNAME':
+                type_color = YELLOW
+                type_icon = "🔗"
+            elif record_type == 'MX':
+                type_color = MAGENTA
+                type_icon = "📧"
+            elif record_type == 'TXT':
+                type_color = BLUE
+                type_icon = "📝"
+            elif record_type == 'NS':
+                type_color = BRIGHT_CYAN
+                type_icon = "🗂️"
+            else:
+                type_color = WHITE
+                type_icon = "❓"
+            
+            # Truncate long data for table display
+            display_data = str(record_data)
+            if len(display_data) > 33:
+                display_data = display_data[:30] + "..."
+            
+            display_name = str(record_name)
+            if len(display_name) > 18:
+                display_name = display_name[:15] + "..."
+            
+            # TTL color coding
+            ttl_color = GREEN if record_ttl == 300 else YELLOW if record_ttl < 3600 else CYAN
+            
+            print(f"{BRIGHT_WHITE}{str(record_id):<12}{RESET} {type_color}{record_type:<8}{RESET} {WHITE}{display_name:<20}{RESET} {CYAN}{display_data:<35}{RESET} {ttl_color}{str(record_ttl):<8}{RESET}")
+        
+        # Summary by record type
+        print(f"\n{BOLD}{CYAN}=== RECORD TYPE SUMMARY ==={RESET}")
+        for record_type, count in sorted(record_types.items()):
+            if record_type == 'A':
+                type_color = GREEN
+                type_icon = "🌐"
+            elif record_type == 'AAAA':
+                type_color = CYAN
+                type_icon = "🌐"
+            elif record_type == 'CNAME':
+                type_color = YELLOW
+                type_icon = "🔗"
+            elif record_type == 'MX':
+                type_color = MAGENTA
+                type_icon = "📧"
+            elif record_type == 'TXT':
+                type_color = BLUE
+                type_icon = "📝"
+            elif record_type == 'NS':
+                type_color = BRIGHT_CYAN
+                type_icon = "🗂️"
+            else:
+                type_color = WHITE
+                type_icon = "❓"
+            
+            print(f"  {type_color}{type_icon} {record_type}:{RESET} {BRIGHT_WHITE}{count} record(s){RESET}")
+        
+        print(f"\n{BOLD}{CYAN}=== TOTAL RECORDS ==={RESET}")
+        print(f"  {BLUE}Total DNS Records:{RESET} {BRIGHT_WHITE}{len(dns_records)}{RESET}")
+        
+    else:
+        print(f"  {YELLOW}No DNS records found{RESET}")
+
 def get_api_key():
     """Get API key from command line arguments or environment variable."""
     parser = argparse.ArgumentParser(description='24Fire API CLI Tool')
@@ -1187,12 +1466,24 @@ def get_api_key():
     parser.add_argument('-d', '--ddos',
                         help="Display DDoS protection settings (requires: -t, --target)",
                         action='store_true')
-    parser.add_argument('-I', '--install',
+    parser.add_argument('-i', '--install',
                         help="Install automations on target server (requires: -t, --target)",
                         action='store_true')
-    parser.add_argument('--script-url',
+    parser.add_argument('-su', '--script-url',
                         help="Custom script URL for automations installation",
                         type=str)
+    parser.add_argument('-dns',
+                        help="DNS Management action: add, edit, remove, or leave empty to list records",
+                        type=str,
+                        nargs='?',
+                        const='',
+                        choices=['add', 'edit', 'remove', ''])
+    parser.add_argument("-rm", '--remove',
+                        help="Record ID to remove (used with -dns remove)")
+    parser.add_argument("-A", '--add',
+                        help="Add DNS record: type,name,data (used with -dns add)")
+    parser.add_argument("-e", '--edit',
+                        help="Edit DNS record: record_id,type,name,data (used with -dns edit)")
     
     args = parser.parse_args()
     
@@ -1263,6 +1554,56 @@ def get_api_key():
             sys.exit(1)
         
         install_automations(api_key, args.target, args.script_url)
+        sys.exit(0)
+
+    # Handle DNS operations
+    if args.dns is not None:
+        api_key = args.api_key or os.getenv("FIRE_API_KEY") or "None"
+        
+        if not args.target:
+            print(f"{RED}Error: --target is required for DNS operations{RESET}")
+            print(f"{YELLOW}Usage: python main.py -dns [action] -t <domain_name_or_id>{RESET}")
+            sys.exit(1)
+        
+        if args.dns == 'remove':
+            if not args.remove:
+                print(f"{RED}Error: --remove <record_id> is required for DNS remove operations{RESET}")
+                sys.exit(1)
+            handle_dns_remove(api_key, args.target, args.remove)
+        
+        elif args.dns == 'add':
+            if not args.add:
+                print(f"{RED}Error: --add <type,name,data> is required for DNS add operations{RESET}")
+                print(f"{YELLOW}Example: python main.py -dns add -t domain.com --add A,www,192.168.1.1{RESET}")
+                sys.exit(1)
+            
+            try:
+                dns_type, name, data = args.add.split(',', 2)
+                handle_dns_add(api_key, args.target, dns_type.strip(), name.strip(), data.strip())
+            except ValueError:
+                print(f"{RED}Error: Invalid format for --add. Use: type,name,data{RESET}")
+                sys.exit(1)
+        
+        elif args.dns == 'edit':
+            if not args.edit:
+                print(f"{RED}Error: --edit <record_id,type,name,data> is required for DNS edit operations{RESET}")
+                print(f"{YELLOW}Example: python main.py -dns edit -t domain.com --edit 123,A,www,192.168.1.2{RESET}")
+                sys.exit(1)
+            
+            try:
+                record_id, dns_type, name, data = args.edit.split(',', 3)
+                handle_dns_edit(api_key, args.target, record_id.strip(), dns_type.strip(), name.strip(), data.strip())
+            except ValueError:
+                print(f"{RED}Error: Invalid format for --edit. Use: record_id,type,name,data{RESET}")
+                sys.exit(1)
+        
+        elif args.dns == '':
+            # Handle empty -dns argument (list records)
+            handle_dns_list(api_key, args.target)
+        
+        else:
+            print(f"{RED}Invalid DNS action: {args.dns}. Valid actions: add, edit, remove (or leave empty to list){RESET}")
+        
         sys.exit(0)
 
     # Handle DDoS operations
