@@ -78,7 +78,7 @@ jobs:
         ./dist/24fire --help
         
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@4.6.2
       with:
         name: 24fire-linux
         path: dist/24fire
@@ -120,7 +120,7 @@ jobs:
         ./dist/24fire --help
         
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@4.6.2
       with:
         name: 24fire-macos
         path: dist/24fire
