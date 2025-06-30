@@ -102,7 +102,7 @@ jobs:
         ./dist/${{ env.APP_NAME }} --help
         
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@4.6.2
       with:
         name: ${{ matrix.asset_name }}
         path: dist/${{ matrix.artifact_name }}
