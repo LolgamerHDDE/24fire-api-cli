@@ -7,6 +7,9 @@ import subprocess
 import tempfile
 import urllib.request
 import stat
+import paramiko
+import io
+import time
 from dotenv import load_dotenv
 
 # ANSI escape codes for CLI colors
@@ -1093,24 +1096,251 @@ def handle_ddos(api_key, target):
     except requests.RequestException as e:
         print(f"{RED}Network error fetching DDoS protection settings: {e}{RESET}")
 
+def extract_kvm_info(api_key, target):
+    """Extract username, password, and IP address from KVM server config."""
+    server = find_kvm_server(api_key, target)
+    
+    if not server:
+        return None
+    
+    server_internal_id = server['internal_id']
+    url = f'https://manage.24fire.de/api/kvm/{server_internal_id}/config'
+    
+    try:
+        response = requests.get(url, headers={
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Fire-Apikey': api_key
+        })
+        
+        if response.status_code == 200:
+            json_response = response.json()
+            if json_response.get('status') == 'success':
+                config = json_response['data']['config']
+                
+                # Extract basic credentials
+                username = config.get('username')
+                password = config.get('password')
+                hostname = config.get('hostname')
+                
+                # Extract IP addresses
+                primary_ipv4 = None
+                all_ipv4 = []
+                ipv4_addresses = config.get('ipv4', [])
+                
+                for ip_info in ipv4_addresses:
+                    ip_addr = ip_info.get('ip_address')
+                    if ip_addr:
+                        all_ipv4.append({
+                            'ip_address': ip_addr,
+                            'gateway': ip_info.get('ip_gateway'),
+                            'ddos_protection': ip_info.get('ddos_protection'),
+                            'rdns': ip_info.get('rdns')
+                        })
+                        
+                        # Use first IP as primary
+                        if primary_ipv4 is None:
+                            primary_ipv4 = ip_addr
+                
+                # Extract IPv6 addresses
+                all_ipv6 = []
+                ipv6_addresses = config.get('ipv6', [])
+                
+                for ip_info in ipv6_addresses:
+                    ip_addr = ip_info.get('ip_address')
+                    if ip_addr:
+                        all_ipv6.append({
+                            'ip_address': ip_addr,
+                            'gateway': ip_info.get('ip_gateway')
+                        })
+                
+                # Extract monitoring info
+                monitoring = config.get('monitoring', {})
+                ssh_port = monitoring.get('port', 22) if monitoring.get('enabled') else 22
+                
+                # Extract server specs
+                cores = config.get('cores')
+                memory = config.get('mem')  # in MB
+                disk = config.get('disk')   # in GB
+                network_speed = config.get('network_speed')
+                
+                # Extract OS info
+                os_info = config.get('os', {})
+                os_name = os_info.get('name')
+                os_display = os_info.get('displayname')
+                
+                return {
+                    # Basic connection info
+                    'username': username,
+                    'password': password,
+                    'hostname': hostname,
+                    'ip_address': primary_ipv4,  # Primary IPv4 for backward compatibility
+                    'ssh_port': ssh_port,
+                    'server_name': server['name'],
+                    'server_id': server['internal_id'],
+                    
+                    # All IP addresses
+                    'ipv4_addresses': all_ipv4,
+                    'ipv6_addresses': all_ipv6,
+                    
+                    # Server specifications
+                    'specs': {
+                        'cores': cores,
+                        'memory_mb': memory,
+                        'disk_gb': disk,
+                        'network_speed': network_speed
+                    },
+                    
+                    # Operating system
+                    'os': {
+                        'name': os_name,
+                        'display_name': os_display
+                    },
+                    
+                    # Monitoring
+                    'monitoring': {
+                        'enabled': monitoring.get('enabled', False),
+                        'port': ssh_port
+                    }
+                }
+                
+        else:
+            print(f"{RED}HTTP Error {response.status_code} fetching KVM config{RESET}")
+            return None
+            
+    except requests.RequestException as e:
+        print(f"{RED}Network error fetching KVM config: {e}{RESET}")
+        return None
+    except KeyError as e:
+        print(f"{RED}Missing key in API response: {e}{RESET}")
+        return None
+    except Exception as e:
+        print(f"{RED}Error parsing KVM config: {e}{RESET}")
+        return None
+
+def display_kvm_info(api_key, target):
+    """Display comprehensive KVM server information."""
+    info = extract_kvm_info(api_key, target)
+    
+    if not info:
+        print(f"{RED}Could not retrieve KVM information for '{target}'{RESET}")
+        return
+    
+    print(f"\n{BOLD}{CYAN}=== KVM SERVER INFORMATION ==={RESET}")
+    print(f"{BLUE}Server Name:{RESET} {BRIGHT_WHITE}{info['server_name']}{RESET}")
+    print(f"{BLUE}Server ID:{RESET} {BRIGHT_WHITE}{info['server_id']}{RESET}")
+    print(f"{BLUE}Hostname:{RESET} {BRIGHT_WHITE}{info['hostname']}{RESET}")
+    
+    print(f"\n{BOLD}{MAGENTA}=== CONNECTION INFO ==={RESET}")
+    print(f"{BLUE}Username:{RESET} {BRIGHT_WHITE}{info['username']}{RESET}")
+    print(f"{BLUE}Password:{RESET} {BRIGHT_WHITE}{info['password']}{RESET}")
+    print(f"{BLUE}SSH Port:{RESET} {BRIGHT_WHITE}{info['ssh_port']}{RESET}")
+    
+    # Primary IP
+    if info['ip_address']:
+        print(f"{BLUE}Primary IP:{RESET} {GREEN}{info['ip_address']}{RESET}")
+        print(f"{BLUE}SSH Command:{RESET} {CYAN}ssh {info['username']}@{info['ip_address']}{RESET}")
+        if info['ssh_port'] != 22:
+            print(f"{BLUE}SSH with Port:{RESET} {CYAN}ssh -p {info['ssh_port']} {info['username']}@{info['ip_address']}{RESET}")
+    
+    # All IPv4 addresses
+    if info['ipv4_addresses']:
+        print(f"\n{BOLD}{MAGENTA}=== IPv4 ADDRESSES ==={RESET}")
+        for idx, ip_info in enumerate(info['ipv4_addresses'], 1):
+            print(f"  {BOLD}{CYAN}IP #{idx}:{RESET}")
+            print(f"    {BLUE}Address:{RESET} {GREEN}{ip_info['ip_address']}{RESET}")
+            print(f"    {BLUE}Gateway:{RESET} {CYAN}{ip_info['gateway']}{RESET}")
+            print(f"    {BLUE}DDoS Protection:{RESET} {YELLOW}{ip_info['ddos_protection']}{RESET}")
+            print(f"    {BLUE}rDNS:{RESET} {WHITE}{ip_info['rdns']}{RESET}")
+    
+    # IPv6 addresses
+    if info['ipv6_addresses']:
+        print(f"\n{BOLD}{MAGENTA}=== IPv6 ADDRESSES ==={RESET}")
+        for idx, ip_info in enumerate(info['ipv6_addresses'], 1):
+            print(f"  {BOLD}{CYAN}IPv6 #{idx}:{RESET}")
+            print(f"    {BLUE}Address:{RESET} {GREEN}{ip_info['ip_address']}{RESET}")
+            print(f"    {BLUE}Gateway:{RESET} {CYAN}{ip_info['gateway']}{RESET}")
+    
+    # Server specs
+    specs = info['specs']
+    print(f"\n{BOLD}{MAGENTA}=== SERVER SPECIFICATIONS ==={RESET}")
+    print(f"{BLUE}CPU Cores:{RESET} {BRIGHT_WHITE}{specs['cores']}{RESET}")
+    print(f"{BLUE}Memory:{RESET} {BRIGHT_WHITE}{specs['memory_mb']} MB{RESET} ({CYAN}{specs['memory_mb']/1024:.1f} GB{RESET})")
+    print(f"{BLUE}Disk Space:{RESET} {BRIGHT_WHITE}{specs['disk_gb']} GB{RESET}")
+    print(f"{BLUE}Network Speed:{RESET} {BRIGHT_WHITE}{specs['network_speed']} Mbps{RESET}")
+    
+    # Operating system
+    os_info = info['os']
+    print(f"\n{BOLD}{MAGENTA}=== OPERATING SYSTEM ==={RESET}")
+    print(f"{BLUE}OS Name:{RESET} {BRIGHT_WHITE}{os_info['name']}{RESET}")
+    print(f"{BLUE}Display Name:{RESET} {BRIGHT_WHITE}{os_info['display_name']}{RESET}")
+    
+    # Monitoring
+    monitoring = info['monitoring']
+    print(f"\n{BOLD}{MAGENTA}=== MONITORING ==={RESET}")
+    status_color = GREEN if monitoring['enabled'] else RED
+    status_text = "Enabled" if monitoring['enabled'] else "Disabled"
+    print(f"{BLUE}Status:{RESET} {status_color}{status_text}{RESET}")
+    print(f"{BLUE}Port:{RESET} {BRIGHT_WHITE}{monitoring['port']}{RESET}")
+
+def get_kvm_connection_string(api_key, target):
+    """Get a simple SSH connection string for the KVM server."""
+    info = extract_kvm_info(api_key, target)
+    
+    if not info or not info['ip_address']:
+        return None
+    
+    if info['ssh_port'] != 22:
+        return f"ssh -p {info['ssh_port']} {info['username']}@{info['ip_address']}"
+    else:
+        return f"ssh {info['username']}@{info['ip_address']}"
+
+def validate_kvm_connection(api_key, target):
+    """Validate that we can extract all necessary connection info."""
+    info = extract_kvm_info(api_key, target)
+    
+    if not info:
+        return False, "Could not retrieve server information"
+    
+    required_fields = ['username', 'password', 'ip_address']
+    missing_fields = [field for field in required_fields if not info.get(field)]
+    
+    if missing_fields:
+        return False, f"Missing required fields: {', '.join(missing_fields)}"
+    
+    return True, "All connection info available"
+
 def install_automations(api_key, target, script_url=None):
-    """Install automations script on target server."""
+    """Install automations script on target server via SSH using paramiko."""
     server = find_kvm_server(api_key, target)
     
     if not server:
         print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
         return
     
-    if 1==1:
-        print(f"{RED}The Automations system is not finished yet. We are Sorry! :({RESET}")
-        sys.exit(0)
+    # Get server credentials
+    print(f"{BLUE}Fetching server credentials...{RESET}")
+    credentials = extract_kvm_info(api_key, target)
+    
+    if not credentials:
+        print(f"{RED}Could not retrieve server credentials{RESET}")
+        return
+    
+    username = credentials['username']
+    password = credentials['password']
+    ip_address = credentials['ip_address']
+    server_name = credentials['server_name']
+    
+    if not all([username, password, ip_address]):
+        print(f"{RED}Incomplete credentials retrieved{RESET}")
+        return
     
     # Default to your automations repository
     if not script_url:
         script_url = "https://raw.githubusercontent.com/LolgamerHDDE/24fire-api-cli-automations/main/install.sh"
     
-    print(f"{BLUE}Installing automations on {server['name']}...{RESET}")
+    print(f"{BLUE}Installing automations on {server_name} ({ip_address})...{RESET}")
     print(f"{YELLOW}This will download and execute: {script_url}{RESET}")
+    print(f"{YELLOW}Target: {username}@{ip_address}{RESET}")
     
     # Confirm with user
     confirm = input(f"{YELLOW}Continue? (y/N): {RESET}").strip().lower()
@@ -1119,41 +1349,257 @@ def install_automations(api_key, target, script_url=None):
         return
     
     try:
-        # Download the script
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.sh', delete=False) as temp_file:
-            print(f"{BLUE}Downloading installation script...{RESET}")
-            with urllib.request.urlopen(script_url) as response:
-                script_content = response.read().decode('utf-8')
+        # Download the script content
+        print(f"{BLUE}Downloading installation script...{RESET}")
+        response = requests.get(url=script_url)
+        response.raise_for_status()
+        install_script_content = response.text
+
+        # Connect via SSH using paramiko
+        print(f"{BLUE}Connecting to {ip_address} via SSH...{RESET}")
+        
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # Connect to the server
+        ssh_client.connect(
+            hostname=ip_address,
+            username=username,
+            password=password,
+            timeout=30,
+            banner_timeout=30
+        )
+        
+        print(f"{GREEN}✓ Connected successfully to {server_name}{RESET}")
+        
+        # Execute the script
+        print(f"{BLUE}Executing installation script...{RESET}")
+        
+        # Method 1: Execute script directly
+        stdin, stdout, stderr = ssh_client.exec_command('bash -s', timeout=300)
+        
+        # Send the script content to stdin
+        stdin.write(install_script_content)
+        stdin.flush()
+        stdin.channel.shutdown_write()
+        
+        # Read output in real-time
+        print(f"{CYAN}--- Script Output ---{RESET}")
+        
+        # Read stdout and stderr simultaneously
+        while not stdout.channel.exit_status_ready():
+            if stdout.channel.recv_ready():
+                output = stdout.channel.recv(1024).decode('utf-8')
+                print(output, end='')
             
-            temp_file.write(script_content)
-            temp_file.flush()
+            if stderr.channel.recv_stderr_ready():
+                error = stderr.channel.recv_stderr(1024).decode('utf-8')
+                print(f"{RED}{error}{RESET}", end='')
             
-            # Make executable
-            os.chmod(temp_file.name, stat.S_IRWXU | stat.S_IRGRP | stat.S_IROTH)
-            
-            print(f"{BLUE}Executing installation script...{RESET}")
-            
-            # Execute the script
-            result = subprocess.run(['bash', temp_file.name], 
-                                  capture_output=True, 
-                                  text=True)
-            
-            if result.returncode == 0:
-                print(f"{GREEN}✓ Automations installed successfully on {server['name']}{RESET}")
-                if result.stdout:
-                    print(f"{CYAN}Output:{RESET}")
-                    print(result.stdout)
-            else:
-                print(f"{RED}✗ Installation failed{RESET}")
-                if result.stderr:
-                    print(f"{RED}Error:{RESET}")
-                    print(result.stderr)
-            
-            # Clean up
-            os.unlink(temp_file.name)
-            
+            time.sleep(0.1)
+        
+        # Get any remaining output
+        remaining_stdout = stdout.read().decode('utf-8')
+        remaining_stderr = stderr.read().decode('utf-8')
+        
+        if remaining_stdout:
+            print(remaining_stdout, end='')
+        if remaining_stderr:
+            print(f"{RED}{remaining_stderr}{RESET}", end='')
+        
+        # Get exit code
+        exit_code = stdout.channel.recv_exit_status()
+        
+        print(f"{CYAN}--- End Output ---{RESET}")
+        
+        if exit_code == 0:
+            print(f"{GREEN}✓ Automations installed successfully on {server_name}{RESET}")
+        else:
+            print(f"{RED}✗ Installation failed with exit code {exit_code}{RESET}")
+        
+        # Close connection
+        ssh_client.close()
+        
+    except paramiko.AuthenticationException:
+        print(f"{RED}✗ Authentication failed. Check username/password.{RESET}")
+    except paramiko.SSHException as e:
+        print(f"{RED}✗ SSH connection error: {e}{RESET}")
+    except requests.RequestException as e:
+        print(f"{RED}✗ Error downloading script: {e}{RESET}")
     except Exception as e:
-        print(f"{RED}Error during installation: {e}{RESET}")
+        print(f"{RED}✗ Error during installation: {e}{RESET}")
+
+def install_automations_with_sftp(api_key, target, script_url=None):
+    """Install automations using SFTP to upload script first, then execute."""
+    server = find_kvm_server(api_key, target)
+    
+    if not server:
+        print(f"{RED}Server '{target}' not found or is not a KVM server.{RESET}")
+        return
+    
+    # Get server credentials
+    print(f"{BLUE}Fetching server credentials...{RESET}")
+    credentials = extract_kvm_info(api_key, target)
+    
+    if not credentials:
+        print(f"{RED}Could not retrieve server credentials{RESET}")
+        return
+    
+    username = credentials['username']
+    password = credentials['password']
+    ip_address = credentials['ip_address']
+    server_name = credentials['server_name']
+    
+    if not all([username, password, ip_address]):
+        print(f"{RED}Incomplete credentials retrieved{RESET}")
+        return
+    
+    # Default to your automations repository
+    if not script_url:
+        script_url = "https://raw.githubusercontent.com/LolgamerHDDE/24fire-api-cli-automations/main/install.sh"
+    
+    print(f"{BLUE}Installing automations on {server_name} ({ip_address})...{RESET}")
+    print(f"{YELLOW}Method: SFTP upload + execution{RESET}")
+    
+    # Confirm with user
+    confirm = input(f"{YELLOW}Continue? (y/N): {RESET}").strip().lower()
+    if confirm != 'y':
+        print(f"{YELLOW}Installation cancelled.{RESET}")
+        return
+    
+    try:
+        # Download the script content
+        print(f"{BLUE}Downloading installation script...{RESET}")
+        response = requests.get(url=script_url)
+        response.raise_for_status()
+        install_script_content = response.text
+
+        # Connect via SSH
+        print(f"{BLUE}Connecting to {ip_address} via SSH...{RESET}")
+        
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        ssh_client.connect(
+            hostname=ip_address,
+            username=username,
+            password=password,
+            timeout=30
+        )
+        
+        print(f"{GREEN}✓ Connected successfully{RESET}")
+        
+        # Upload script via SFTP
+        print(f"{BLUE}Uploading script via SFTP...{RESET}")
+        
+        sftp = ssh_client.open_sftp()
+        
+        # Create a file-like object from the script content
+        script_file = io.StringIO(install_script_content)
+        
+        # Upload to remote server
+        remote_script_path = '/tmp/24fire_install.sh'
+        with sftp.open(remote_script_path, 'w') as remote_file:
+            remote_file.write(install_script_content)
+        
+        # Make script executable
+        sftp.chmod(remote_script_path, 0o755)
+        sftp.close()
+        
+        print(f"{GREEN}✓ Script uploaded to {remote_script_path}{RESET}")
+        
+        # Execute the script
+        print(f"{BLUE}Executing installation script...{RESET}")
+        
+        stdin, stdout, stderr = ssh_client.exec_command(f'bash {remote_script_path}', timeout=300)
+        
+        # Read output in real-time
+        print(f"{CYAN}--- Script Output ---{RESET}")
+        
+        while not stdout.channel.exit_status_ready():
+            if stdout.channel.recv_ready():
+                output = stdout.channel.recv(1024).decode('utf-8')
+                print(output, end='')
+            
+            if stderr.channel.recv_stderr_ready():
+                error = stderr.channel.recv_stderr(1024).decode('utf-8')
+                print(f"{RED}{error}{RESET}", end='')
+            
+            time.sleep(0.1)
+        
+        # Get remaining output
+        remaining_stdout = stdout.read().decode('utf-8')
+        remaining_stderr = stderr.read().decode('utf-8')
+        
+        if remaining_stdout:
+            print(remaining_stdout, end='')
+        if remaining_stderr:
+            print(f"{RED}{remaining_stderr}{RESET}", end='')
+        
+        exit_code = stdout.channel.recv_exit_status()
+        
+        print(f"{CYAN}--- End Output ---{RESET}")
+        
+        # Clean up the script file
+        ssh_client.exec_command(f'rm -f {remote_script_path}')
+        
+        if exit_code == 0:
+            print(f"{GREEN}✓ Automations installed successfully on {server_name}{RESET}")
+        else:
+            print(f"{RED}✗ Installation failed with exit code {exit_code}{RESET}")
+        
+        ssh_client.close()
+        
+    except paramiko.AuthenticationException:
+        print(f"{RED}✗ Authentication failed. Check username/password.{RESET}")
+    except paramiko.SSHException as e:
+        print(f"{RED}✗ SSH connection error: {e}{RESET}")
+    except requests.RequestException as e:
+        print(f"{RED}✗ Error downloading script: {e}{RESET}")
+    except Exception as e:
+        print(f"{RED}✗ Error during installation: {e}{RESET}")
+
+def execute_remote_command(api_key, target, command):
+    """Execute a single command on the remote server."""
+    credentials = extract_kvm_info(api_key, target)
+    
+    if not credentials:
+        print(f"{RED}Could not retrieve server credentials{RESET}")
+        return False
+    
+    username = credentials['username']
+    password = credentials['password']
+    ip_address = credentials['ip_address']
+    
+    try:
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        ssh_client.connect(
+            hostname=ip_address,
+            username=username,
+            password=password,
+            timeout=30
+        )
+        
+        stdin, stdout, stderr = ssh_client.exec_command(command, timeout=60)
+        
+        output = stdout.read().decode('utf-8')
+        error = stderr.read().decode('utf-8')
+        exit_code = stdout.channel.recv_exit_status()
+        
+        if output:
+            print(output)
+        if error:
+            print(f"{RED}{error}{RESET}")
+        
+        ssh_client.close()
+        
+        return exit_code == 0
+        
+    except Exception as e:
+        print(f"{RED}Error executing command: {e}{RESET}")
+        return False
 
 def find_domain(api_key, domain_identifier):
     """Find domain by name or internal_id and return domain info."""
@@ -1484,6 +1930,8 @@ def get_api_key():
                         help="Add DNS record: type,name,data (used with -dns add)")
     parser.add_argument("-e", '--edit',
                         help="Edit DNS record: record_id,type,name,data (used with -dns edit)")
+    parser.add_argument("-auto", "--automations",
+                        help="Configs Automations on the Server (requires: -t, --target)")
     
     args = parser.parse_args()
     
