@@ -1,6 +1,6 @@
 requests==2.32.4
 python-dotenv==1.0.1
-certifi==2025.6.15
+certifi==2025.7.14
 charset-normalizer==3.4.2
 idna==3.10
 urllib3==2.5.0
